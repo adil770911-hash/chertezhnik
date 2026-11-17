@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Чертёжник — Бишкек и Чуйская область</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; padding: 14px; background: #0f1318; color: #f1f5f9; }
+    .card { max-width: 580px; margin: 0 auto; background: #181e26; border-radius: 14px; padding: 16px; border: 1px solid #2a3441; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 5px; }
+    input, select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #334155; background: #0f1318; color: #fff; font-size: 15px; }
+    .row { margin-bottom: 12px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .variants { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+    .variant-btn { text-align: left; padding: 9px 11px; border-radius: 10px; border: 1px solid #334155; background: #202833; color: #fff; cursor: pointer; font-size: 14px; }
+    .variant-btn.selected { border-color: #22c55e; background: #143321; }
+    .area-tag { display: inline-block; font-size: 12px; color: #4ade80; margin-bottom: 2px; }
+    .calc-btn { width: 100%; padding: 12px; border: none; border-radius: 10px; background: #16a34a; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 4px; }
+    .result { margin-top: 14px; padding: 12px; border-radius: 10px; background: #0f1318; border: 1px solid #2a3441; display: none; }
+    .result.show { display: block; }
+    .price { font-size: 24px; font-weight: 700; color: #4ade80; margin: 6px 0; }
+    .meta { font-size: 13px; color: #94a3b8; line-height: 1.5; word-break: break-word; }
+    code { font-size: 12px; color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>«Чертёжник» — геокодинг и расчёт</h1>
+
+    <div class="row">
+      <label for="pointA">Точка А (откуда)</label>
+      <input id="pointA" type="text" placeholder="Например: ул. Ленина" autocomplete="off" />
+      <div id="variantsA" class="variants"></div>
+    </div>
+
+    <div class="row">
+      <label for="pointB">Точка Б (куда)</label>
+      <input id="pointB" type="text" placeholder="Например: пр. Чуй или Кант" autocomplete="off" />
+      <div id="variantsB" class="variants"></div>
+    </div>
+
+    <div class="row grid2">
+      <div>
+        <label for="trafficIndex">Пробки (1.0–10)</label>
+        <input id="trafficIndex" type="number" step="0.1" min="1" max="10" value="1.0" />
+      </div>
+      <div>
+        <label for="weatherState">Погода</label>
+        <select id="weatherState">
+          <option value="clear">Ясно / сухо</option>
+          <option value="rain">Дождь / мокро</option>
+          <option value="snow">Снег / гололёд</option>
+          <option value="fog">Туман / плохая видимость</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="calc-btn" id="calcBtn">Рассчитать для мозг-агента</button>
+
+    <div id="resultBox" class="result">
+      <div class="meta" id="fixedAddresses"></div>
+      <div class="price" id="finalPrice"></div>
+      <div class="meta" id="calcDetails"></div>
+    </div>
+  </div>
+
+  <script>
+    // База совпадений для двойных/тройных улиц и населённых пунктов (заменяется API геокодера)
+    const ADDRESS_CATALOG = [
+      {
+        keys: ["ленина", "ул. ленина", "улица ленина"],
+        variants: [
+          { area: "Бишкек — Свердловский район", address: "улица Ленина, 150", coords: [42.8782, 74.6145], basePrice: 240 },
+          { area: "Бишкек — Первомайский район", address: "улица Ленина, 150", coords: [42.8691, 74.5812], basePrice: 260 },
+          { area: "Бишкек — Октябрьский район", address: "улица Ленина, 150", coords: [42.8520, 74.6298], basePrice: 255 },
+          { area: "Бишкек — Ак-Орго", address: "улица Ленина, Ак-Орго", coords: [42.8495, 74.5310], basePrice: 290 },
+          { area: "Чуйская обл. — Покровка", address: "улица Ленина, с. Покровка", coords: [42.8740, 74.8420], basePrice: 420 },
+          { area: "Чуйская обл. — Кант", address: "улица Ленина, г. Кант", coords: [42.8910, 74.8510], basePrice: 450 }
+        ]
+      },
+      {
+        keys: ["чуй", "пр. чуй", "проспект чуй"],
+        variants: [
+          { area: "Бишкек — Первомайский район", address: "проспект Чуй, 120", coords: [42.8758, 74.5950], basePrice: 210 },
+          { area: "Бишкек — Свердловский район", address: "проспект Чуй, 120", coords: [42.8764, 74.6210], basePrice: 220 },
+          { area: "Чуйская обл. — Кант", address: "проспект Чуй, г. Кант", coords: [42.8902, 74.8501], basePrice: 440 }
+        ]
+      }
+    ];
+
+    const selected = { A: null, B: null };
+    const weatherMultipliers = { clear: 1.0, rain: 1.15, snow: 1.3, fog: 1.1 };
+
+    const norm = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+    function getVariants(raw) {
+      const q = norm(raw);
+      if (!q) return [];
+      for (const item of ADDRESS_CATALOG) {
+        if (item.keys.some((k) => q.includes(k) || k.includes(q))) {
+          return item.variants;
+        }
+      }
+      const fallbackAreas = [
+        "Бишкек — Свердловский район",
+        "Бишкек — Первомайский район",
+        "Бишкек — Октябрьский район",
+        "Бишкек — Ленинский район",
+        "Бишкек — Ак-Орго",
+        "Чуйская обл. — Покровка",
+        "Чуйская обл. — Кант"
+      ];
+      return fallbackAreas.map((area, i) => ({
+        area,
+        address: raw.trim(),
+        coords: [42.87 + i * 0.004, 74.60 + i * 0.015],
+        basePrice: 250 + i * 25
+      }));
+    }
+
+    function renderVariants(containerId, side, list) {
+      const box = document.getElementById(containerId);
+      box.innerHTML = "";
+      selected[side] = null;
+      if (!list.length) return;
+
+      list.forEach((v, idx) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "variant-btn";
+        btn.innerHTML = `<span class="area-tag">${v.area}</span><br>${v.address}`;
+        btn.onclick = () => {
+          box.querySelectorAll(".variant-btn").forEach((b) => b.classList.remove("selected"));
+          btn.classList.add("selected");
+          selected[side] = v;
+        };
+        if (idx === 0) {
+          btn.classList.add("selected");
+          selected[side] = v;
+        }
+        box.appendChild(btn);
+      });
+    }
+
+    document.getElementById("pointA").addEventListener("input", (e) => {
+      renderVariants("variantsA", "A", getVariants(e.target.value));
+    });
+    document.getElementById("pointB").addEventListener("input", (e) => {
+      renderVariants("variantsB", "B", getVariants(e.target.value));
+    });
+
+    document.getElementById("calcBtn").addEventListener("click", () => {
+      const rawA = document.getElementById("pointA").value.trim();
+      const rawB = document.getElementById("pointB").value.trim();
+      if (!rawA || !rawB) return;
+
+      const varA = selected.A || getVariants(rawA)[0];
+      const varB = selected.B || getVariants(rawB)[0];
+      const traffic = Math.max(1, parseFloat(document.getElementById("trafficIndex").value) || 1);
+      const weather = document.getElementById("weatherState").value;
+
+      const baseSum = varA.basePrice + varB.basePrice;
+      const trafficMult = traffic <= 1 ? 1 : 1 + (traffic - 1) * 0.22;
+      const weatherMult = weatherMultipliers[weather] || 1;
+      const yandexPrice = Math.round(baseSum * trafficMult * weatherMult);
+      const finalPrice = Math.round(yandexPrice * 0.9); // строго -10% от Яндекса
+
+      const payload = {
+        agent: "chertezhnik",
+        pointA: { area: varA.area, address: varA.address, coords: varA.coords },
+        pointB: { area: varB.area, address: varB.address, coords: varB.coords },
+        trafficIndex: traffic,
+        weather,
+        yandexPrice,
+        discountPercent: 10,
+        finalPrice
+      };
+
+      document.getElementById("fixedAddresses").innerHTML =
+        `<strong>Точка А:</strong> ${varA.area} — ${varA.address}<br>` +
+        `<strong>Точка Б:</strong> ${varB.area} — ${varB.address}`;
+      document.getElementById("finalPrice").textContent = `${finalPrice} сом (-10% от Яндекса)`;
+      document.getElementById("calcDetails").innerHTML =
+        `Яндекс с учётом пробок (${traffic}) и погоды (${weather}): ${yandexPrice} сом<br>` +
+        `<code>${JSON.stringify(payload)}</code>`;
+      document.getElementById("resultBox").classList.add("show");
+    });
+  </script>
+</body>
+</html> lnitial commit
